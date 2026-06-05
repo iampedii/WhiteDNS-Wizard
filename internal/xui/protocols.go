@@ -73,8 +73,44 @@ func BuildProtocolBundle(domain string, values map[string]string) (ProtocolBundl
 		TorShadowsocksClient:   values["tor_shadowsocks_client_password"],
 		VLESSWSPath:            values["vless_ws_path"],
 		TrojanWSPath:           values["trojan_ws_path"],
+		IranXHTTPUUID:          values["iran_xhttp_uuid"],
+		IranWSUUID:             values["iran_ws_uuid"],
+		IranTCPUUID:            values["iran_tcp_uuid"],
+		IranWSPath:             values["iran_ws_path"],
 	}
 	plan := planner.GenerateProtocolPlan(domain, generated)
+	var links []types.ClientLink
+	var inbounds []Inbound
+	for _, proto := range plan.Protocols {
+		if !proto.Enabled {
+			continue
+		}
+		inbound, link, err := inboundAndLink(proto, values)
+		if err != nil {
+			return ProtocolBundle{}, err
+		}
+		inbounds = append(inbounds, inbound)
+		links = append(links, link)
+	}
+	return ProtocolBundle{
+		Plan:     plan,
+		Links:    types.ClientLinks{Clients: links},
+		Inbounds: inbounds,
+	}, nil
+}
+
+// BuildIranProtocolBundle builds the three Iran domestic-fronting profiles
+// (XHTTP-over-TLS, WS-security=none, TCP+HTTP-header). It rides the same
+// inbound/link machinery as BuildProtocolBundle but emits only the Iran
+// profiles, with no Cloudflare/ACME dependency. Fronts are operator-supplied and
+// rotatable (front), validated against the ArvanCloud SNI==Host / Address!=Host
+// invariants before any inbound is built.
+func BuildIranProtocolBundle(domain string, front planner.IranFrontingInput, values map[string]string) (ProtocolBundle, error) {
+	generated := secrets.GeneratedSecrets{IranWSPath: values["iran_ws_path"]}
+	plan := planner.GenerateIranProtocolPlan(domain, front, generated)
+	if err := planner.ValidateIranPlan(plan); err != nil {
+		return ProtocolBundle{}, err
+	}
 	var links []types.ClientLink
 	var inbounds []Inbound
 	for _, proto := range plan.Protocols {
@@ -303,6 +339,39 @@ func inboundAndLink(proto types.Protocol, values map[string]string) (Inbound, ty
 			},
 		}
 		return inbound, link(proto, shadowsocksLink(proto, serverPassword, clientPassword)), nil
+	case "iran_xhttp_tls":
+		uuid := required(values, "iran_xhttp_uuid")
+		inbound := baseInbound(proto, "vless")
+		inbound.Settings = map[string]any{
+			"clients":    []map[string]any{vlessClient(uuid, proto.ClientEmail, DisplayNameForTag(proto.Tag))},
+			"decryption": "none",
+			"fallbacks":  []any{},
+		}
+		inbound.StreamSettings = iranXHTTPTLSStream(proto)
+		inbound.Sniffing = map[string]any{"enabled": false}
+		return inbound, link(proto, iranXHTTPLink(proto, uuid)), nil
+	case "iran_ws_none":
+		uuid := required(values, "iran_ws_uuid")
+		inbound := baseInbound(proto, "vless")
+		inbound.Settings = map[string]any{
+			"clients":    []map[string]any{vlessClient(uuid, proto.ClientEmail, DisplayNameForTag(proto.Tag))},
+			"decryption": "none",
+			"fallbacks":  []any{},
+		}
+		inbound.StreamSettings = iranWSNoneStream(proto)
+		inbound.Sniffing = map[string]any{"enabled": false}
+		return inbound, link(proto, iranWSLink(proto, uuid)), nil
+	case "iran_tcp_http":
+		uuid := required(values, "iran_tcp_uuid")
+		inbound := baseInbound(proto, "vless")
+		inbound.Settings = map[string]any{
+			"clients":    []map[string]any{vlessClient(uuid, proto.ClientEmail, DisplayNameForTag(proto.Tag))},
+			"decryption": "none",
+			"fallbacks":  []any{},
+		}
+		inbound.StreamSettings = iranTCPHTTPStream(proto)
+		inbound.Sniffing = map[string]any{"enabled": false}
+		return inbound, link(proto, iranTCPHTTPLink(proto, uuid)), nil
 	default:
 		return Inbound{}, types.ClientLink{}, fmt.Errorf("unsupported protocol %q", proto.Name)
 	}
@@ -310,6 +379,21 @@ func inboundAndLink(proto types.Protocol, values map[string]string) (Inbound, ty
 
 func shadowsocksMethod() string {
 	return "2022-blake3-aes-256-gcm"
+}
+
+// RenderIranChecklist returns the manual ArvanCloud setup checklist for the Iran
+// domestic-fronting profiles. The tool assumes the CDN exists and never calls
+// the ArvanCloud panel/API (owner policy + NS delegation is registrar-only).
+func RenderIranChecklist() string {
+	return strings.Join([]string{
+		"Manual ArvanCloud checklist (the tool does NOT provision the CDN):",
+		"1. Add each .ir front domain to an ArvanCloud CDN account you control (seed: abshardejh.ir).",
+		"2. Point the CDN origin to this VPS; set origin-pull to HTTP (CertMode origin-http) - no Origin-CA, no ACME.",
+		"3. For the XHTTP-TLS front, ensure the client SNI == HTTP Host (ArvanCloud returns 403 on mismatch).",
+		"4. For the WS-none decoy, keep the connect address different from the Host front and send no SNI.",
+		"5. Open the origin/L4 ports (8080/tcp and 56201-56207/tcp) on the VPS firewall.",
+		"6. Rotate fronts as needed - Example.txt tenant domains belong to other tenants and will die.",
+	}, "\n")
 }
 
 func required(values map[string]string, key string) string {
@@ -484,6 +568,81 @@ func realityXHTTPStream(values map[string]string, prefix string) map[string]any 
 	}
 }
 
+// iranXHTTPTLSStream builds the origin inbound for the Iran XHTTP-over-TLS
+// profile. ArvanCloud terminates client TLS at the edge, so the ORIGIN is
+// security:none (the CDN origin-pulls over HTTP) - NOT reality and NOT tls. The
+// dead scMaxConcurrentPosts field is never emitted; scMaxBufferedPosts:30 stays.
+func iranXHTTPTLSStream(proto types.Protocol) map[string]any {
+	return map[string]any{
+		"network":  "xhttp",
+		"security": "none", // origin behind CDN; NOT reality, NOT tls
+		"xhttpSettings": map[string]any{
+			"host":                 proto.ResolvedHost(), // front .ir; or "" to serve many fronts on one origin
+			"path":                 "/",
+			"mode":                 "auto",
+			"scMaxEachPostBytes":   1000000,
+			"scMaxBufferedPosts":   30,
+			"scMinPostsIntervalMs": 30,
+			"xPaddingBytes":        "100-1000",
+			"noGRPCHeader":         false,
+			"headers":              map[string]any{},
+		},
+		"sockopt": map[string]any{"trustedXForwardedFor": []string{noTrustedXFFSentinel}},
+	}
+}
+
+// iranWSNoneStream builds the origin inbound for the Iran WS-security=none
+// profile. The CDN terminates TLS on the HTTP-tier port; the origin is
+// security:none. The server path strips the client-only ?ed= early-data marker.
+func iranWSNoneStream(proto types.Protocol) map[string]any {
+	return map[string]any{
+		"network":  "ws",
+		"security": "none",
+		"wsSettings": map[string]any{
+			"path": stripEarlyData(proto.Path), // client-only ?ed=; server prefix-matches
+			"host": proto.ResolvedHost(),
+		},
+		"sockopt": map[string]any{"trustedXForwardedFor": []string{noTrustedXFFSentinel}},
+	}
+}
+
+// iranTCPHTTPStream builds the origin inbound for the Iran TCP+fake-HTTP-header
+// profile, carried over an ArvanCloud Layer-4 passthrough port. The origin
+// terminates plain VLESS+TCP with HTTP-header camouflage.
+func iranTCPHTTPStream(proto types.Protocol) map[string]any {
+	return map[string]any{
+		"network":  "tcp",
+		"security": "none",
+		"tcpSettings": map[string]any{
+			"acceptProxyProtocol": false,
+			"header": map[string]any{
+				"type": "http",
+				"request": map[string]any{
+					"version": "1.1",
+					"method":  "GET",
+					"path":    []string{"/"},
+					"headers": map[string]any{
+						"Host":            []string{"www.bing.com"},
+						"User-Agent":      []string{"Mozilla/5.0"},
+						"Accept-Encoding": []string{"gzip, deflate"},
+						"Connection":      []string{"keep-alive"},
+					},
+				},
+				"response": map[string]any{"version": "1.1", "status": "200", "reason": "OK"},
+			},
+		},
+	}
+}
+
+// stripEarlyData removes the client-only ?ed= early-data query from a WS path so
+// the server prefix-matches the bare path.
+func stripEarlyData(path string) string {
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		return path[:i]
+	}
+	return path
+}
+
 func realitySNI(values map[string]string, prefix string) string {
 	sni := strings.TrimSpace(values[prefix+"_sni"])
 	if sni == "" {
@@ -549,6 +708,59 @@ func realityVLESSLink(proto types.Protocol, uuid, publicKey, shortID, sni string
 	return fmt.Sprintf("vless://%s@%s:%d?%s#%s", uuid, proto.Hostname, proto.Port, q, fragmentEscape(clientRemarkForTag(proto.Tag)))
 }
 
+// iranXHTTPLink builds the client link for the Iran XHTTP-over-TLS profile.
+// security=tls describes the client->ArvanCloud-edge leg (the edge terminates
+// it); SNI MUST equal Host (Arvan 403 on mismatch); fp is always chrome. The
+// extra= JSON is minified (no spaces) and emitted through orderedQuery's
+// extra-key special case, which forces any space to %20 (never the raw '+' that
+// trips the v2rayN extra= parser) so the link stays spec-correct even if the
+// JSON ever gains a space.
+func iranXHTTPLink(proto types.Protocol, uuid string) string {
+	q := orderedQuery(
+		queryParam{"type", "xhttp"},
+		queryParam{"security", "tls"},
+		queryParam{"encryption", "none"},
+		queryParam{"host", proto.ResolvedHost()},
+		queryParam{"sni", proto.ResolvedServerName()},
+		queryParam{"path", proto.Path},
+		queryParam{"mode", "auto"},
+		queryParam{"extra", proto.Extra},
+		queryParam{"fp", "chrome"},
+		queryParam{"alpn", "h2,http/1.1"},
+	)
+	return fmt.Sprintf("vless://%s@%s:%d?%s#%s",
+		uuid, proto.ResolvedAddress(), proto.Port, q, iranFragmentEscape(clientRemarkForTag(proto.Tag)))
+}
+
+// iranWSLink builds the client link for the Iran WS-security=none profile. No
+// SNI is emitted; the connect address differs from the Host front; the path
+// keeps the client-only ?ed= early-data marker.
+func iranWSLink(proto types.Protocol, uuid string) string {
+	q := orderedQuery(
+		queryParam{"type", "ws"},
+		queryParam{"security", "none"},
+		queryParam{"encryption", "none"},
+		queryParam{"path", proto.Path}, // keeps ?ed=2048
+		queryParam{"host", proto.ResolvedHost()},
+	)
+	return fmt.Sprintf("vless://%s@%s:%d?%s#%s",
+		uuid, proto.ResolvedAddress(), proto.Port, q, iranFragmentEscape(clientRemarkForTag(proto.Tag)))
+}
+
+// iranTCPHTTPLink builds the client link for the Iran TCP+HTTP-header profile.
+func iranTCPHTTPLink(proto types.Protocol, uuid string) string {
+	q := orderedQuery(
+		queryParam{"type", "tcp"},
+		queryParam{"security", "none"},
+		queryParam{"encryption", "none"},
+		queryParam{"headerType", "http"},
+		queryParam{"path", proto.Path},
+		queryParam{"host", proto.ResolvedHost()},
+	)
+	return fmt.Sprintf("vless://%s@%s:%d?%s#%s",
+		uuid, proto.ResolvedAddress(), proto.Port, q, iranFragmentEscape(clientRemarkForTag(proto.Tag)))
+}
+
 func shadowsocksLink(proto types.Protocol, serverPassword, clientPassword string) string {
 	encoded := base64.RawURLEncoding.EncodeToString([]byte(shadowsocksMethod() + ":" + serverPassword + ":" + clientPassword))
 	q := orderedQuery(queryParam{"type", "tcp"})
@@ -581,6 +793,12 @@ func clientRemarkForTag(tag string) string {
 		return "Reality XHTTP Tor @whiteDNS"
 	case "wdns-tor-shadowsocks":
 		return "Shadowsocks Tor @whiteDNS"
+	case "wdns-iran-xhttp-cdn":
+		return "Iran CDN XHTTP @whiteDNS"
+	case "wdns-iran-ws-cdn":
+		return "Iran CDN WS @whiteDNS"
+	case "wdns-iran-tcp-http":
+		return "Iran TCP HTTP @whiteDNS"
 	default:
 		return DisplayNameForTag(tag)
 	}
@@ -588,6 +806,14 @@ func clientRemarkForTag(tag string) string {
 
 func fragmentEscape(value string) string {
 	return url.PathEscape(value)
+}
+
+// iranFragmentEscape single-encodes the link fragment for Iran profiles. It is
+// the same single url.PathEscape as fragmentEscape but additionally encodes '@'
+// as %40 so the "@whiteDNS" suffix renders identically to the Example.txt links
+// - never the triple-encoding seen in the raw Example.txt fragments.
+func iranFragmentEscape(value string) string {
+	return strings.ReplaceAll(url.PathEscape(value), "@", "%40")
 }
 
 func DisplayNameForTag(tag string) string {
@@ -616,6 +842,12 @@ func DisplayNameForTag(tag string) string {
 		return "Reality XHTTP Tor @whiteDNS"
 	case "wdns-tor-shadowsocks":
 		return "Shadowsocks Tor @whiteDNS"
+	case "wdns-iran-xhttp-cdn":
+		return "Iran CDN XHTTP @whiteDNS"
+	case "wdns-iran-ws-cdn":
+		return "Iran CDN WS @whiteDNS"
+	case "wdns-iran-tcp-http":
+		return "Iran TCP HTTP @whiteDNS"
 	case "wdns-direct":
 		return "Direct outbound @whiteDNS"
 	case "wdns-blocked":
@@ -641,9 +873,24 @@ func orderedQuery(params ...queryParam) string {
 		if strings.TrimSpace(param.value) == "" {
 			continue
 		}
-		parts = append(parts, url.QueryEscape(param.key)+"="+url.QueryEscape(param.value))
+		parts = append(parts, url.QueryEscape(param.key)+"="+escapeQueryValue(param.key, param.value))
 	}
 	return strings.Join(parts, "&")
+}
+
+// escapeQueryValue percent-encodes a query value. For every key except "extra"
+// it is plain url.QueryEscape. For the XHTTP "extra" JSON it rewrites the '+'
+// that url.QueryEscape emits for a space into %20 - url.QueryEscape maps a
+// literal '+' to %2B, so a '+' in its output is unambiguously a space. The
+// current extra JSON is minified (space-free), so this is a no-op today, but it
+// guarantees the v2rayN extra= parser never sees a raw '+' if the JSON ever
+// gains a space.
+func escapeQueryValue(key, value string) string {
+	escaped := url.QueryEscape(value)
+	if key == "extra" {
+		escaped = strings.ReplaceAll(escaped, "+", "%20")
+	}
+	return escaped
 }
 
 func outboundDirect() map[string]any {

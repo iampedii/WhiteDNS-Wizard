@@ -167,6 +167,9 @@ func TestApplyFirewallAllowsPublicPanelPort(t *testing.T) {
 	assertContains(t, joined, "ufw allow 2099/udp")
 	assertContains(t, joined, "ufw allow 8390/tcp")
 	assertContains(t, joined, "ufw allow 8390/udp")
+	assertContains(t, joined, "ufw allow 8080/tcp")
+	assertContains(t, joined, "ufw allow 56201/tcp")
+	assertContains(t, joined, "ufw allow 56207/tcp")
 }
 
 func TestApplyFirewallWarningIncludesPublicPanelPort(t *testing.T) {

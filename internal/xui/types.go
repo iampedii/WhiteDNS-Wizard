@@ -14,7 +14,23 @@ type Input struct {
 	ConfirmReplace bool
 	ACMEEmail      string
 	Progress       func(string)
+	// Profile selects a non-Cloudflare provisioning profile. "iran-domestic"
+	// emits the ArvanCloud collateral-freedom profiles and decouples the apply
+	// path from Cloudflare/ACME entirely.
+	Profile string
+	// CertMode overrides certificate handling: "origin-http" (origin listens
+	// HTTP behind the CDN — no cert), "self-signed" (ECDSA P-256 self-signed
+	// origin cert), or "" / "cloudflare-origin-ca" (the existing Cloudflare path).
+	CertMode string
 }
+
+const (
+	ProfileIranDomestic = "iran-domestic"
+
+	CertModeCloudflareOriginCA = "cloudflare-origin-ca"
+	CertModeSelfSigned         = "self-signed"
+	CertModeOriginHTTP         = "origin-http"
+)
 
 type PanelCredentials struct {
 	Username    string

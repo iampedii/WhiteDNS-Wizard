@@ -142,6 +142,77 @@ func TestCloudflareCheckRequiresTokenInNonInteractiveMode(t *testing.T) {
 	}
 }
 
+func TestIranPlanCommand(t *testing.T) {
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"iran", "plan",
+		"--front-domain", "setup.azargate.ir",
+		"--cdn-host", "cdn2.navaanet.ir",
+		"--cdn-port", "2053",
+		"--ws-front", "domain.iran243.ir",
+		"--ws-address", "snapp.ir",
+		"--ws-port", "8880",
+		"--tcp-host", "edge.nextgen.ir",
+		"--tcp-port", "56206",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	body := out.String()
+	if !strings.Contains(body, "vless://") {
+		t.Fatalf("iran plan did not print a client link:\n%s", body)
+	}
+	if !strings.Contains(body, "type=xhttp&security=tls") {
+		t.Fatalf("iran plan missing the XHTTP-TLS link:\n%s", body)
+	}
+	if !strings.Contains(body, "host=setup.azargate.ir") || !strings.Contains(body, "sni=setup.azargate.ir") {
+		t.Fatalf("iran plan XHTTP link must carry SNI==Host:\n%s", body)
+	}
+	if !strings.Contains(body, "Manual ArvanCloud checklist") {
+		t.Fatalf("iran plan did not print the manual checklist:\n%s", body)
+	}
+	if strings.Contains(strings.ToLower(body), "cloudflare token") {
+		t.Fatalf("iran plan must not require a Cloudflare token:\n%s", body)
+	}
+}
+
+func TestIranPlanRejectsWSAddressEqualsFront(t *testing.T) {
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"iran", "plan",
+		"--front-domain", "front.ir",
+		"--ws-front", "decoy.ir",
+		"--ws-address", "decoy.ir",
+	})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected validation error when ws address == host front")
+	}
+}
+
+func TestIranCommandHelpHasNoCloudflareFlag(t *testing.T) {
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"iran", "plan", "--help"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	body := out.String()
+	if !strings.Contains(body, "--front-domain") || !strings.Contains(body, "--cdn-host") {
+		t.Fatalf("iran plan help missing fronting flags:\n%s", body)
+	}
+	if strings.Contains(body, "--token") {
+		t.Fatalf("iran plan must not expose a Cloudflare --token flag:\n%s", body)
+	}
+}
+
 func TestXUIApplyHelpIncludesSSHKeyPassphraseFlag(t *testing.T) {
 	cmd := NewRootCommand()
 	var out bytes.Buffer

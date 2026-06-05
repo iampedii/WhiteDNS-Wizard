@@ -188,6 +188,41 @@ Useful XUI flags:
 --acme-email admin@example.com
 ```
 
+## Iran domestic-fronting profiles (Cloudflare-decoupled)
+
+For networks like Iran where Cloudflare is blocked, WhiteDNS can generate
+**domestic-CDN "collateral freedom"** profiles instead. These front the tunnel
+through an **Iranian CDN** (e.g. ArvanCloud) using `.ir` SNI/Host values, so the
+traffic looks like ordinary in-country CDN traffic the censor cannot block
+without breaking domestic services. This path uses **no Cloudflare and no ACME**.
+
+Three profiles are produced (reproducing the field-proven techniques):
+
+| Profile | Transport | Security | Notes |
+| --- | --- | --- | --- |
+| `iran_xhttp_tls` | XHTTP over TLS | edge TLS, origin `none` | SNI **must equal** Host (ArvanCloud 403s on mismatch); `extra=` is minified, `%20`-encoded |
+| `iran_ws_none` | WebSocket | `none` | connect-address ≠ Host (the `.ir` decoy); no SNI |
+| `iran_tcp_http` | TCP + HTTP header | `none` | L4 passthrough camouflage |
+
+Interactive: pick **`i) Iran domestic-fronting configs`** from the menu.
+
+CLI (pure dry-run — needs no Cloudflare token, SSH, or panel):
+
+```bash
+./whitedns iran plan \
+  --front-domain setup.azargate.ir \
+  --cdn-host cdn2.navaanet.ir --cdn-port 2053 \
+  --ws-front domain.iran243.ir --ws-host snapp.ir
+```
+
+It prints the three client import links plus a manual ArvanCloud setup checklist.
+The tool does **not** provision the CDN (NS delegation is registrar-only) and does
+**not** call any panel/CDN API. Front domains are operator-supplied and rotatable —
+the literal example domains belong to other tenants and will eventually be blocked.
+
+Server-side origin inbounds are **`security: none`** behind the CDN (never REALITY),
+and only the direct REALITY-Vision profile carries `flow=xtls-rprx-vision`.
+
 ## Output Files
 
 Local project files are written under:

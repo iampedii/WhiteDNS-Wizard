@@ -173,6 +173,131 @@ func GenerateProtocolPlan(domain string, generated secrets.GeneratedSecrets) typ
 	}}
 }
 
+// IranFrontingInput carries the operator-supplied, rotatable fronting values for
+// the Iran domestic-CDN profiles. Empty fields fall back to safe seeded defaults
+// (the owner-controlled abshardejh.ir front). The Example.txt tenant domains are
+// never hardcoded as truth here.
+type IranFrontingInput struct {
+	Front     string // .ir SNI/Host for the XHTTP-TLS profile (SNI == Host; ArvanCloud 403 on mismatch)
+	CDNHost   string // connect address for the XHTTP-TLS profile (clean ArvanCloud edge host/IP)
+	CDNPort   int    // edge port for the XHTTP-TLS profile (one of 2053/2083/2087/8443)
+	WSFront   string // .ir HTTP Host header for the WS-none profile (differs from connect address)
+	WSAddress string // high-collateral .ir connect decoy for the WS-none profile
+	WSPort    int    // edge port for the WS-none profile (one of 8880/2086/8080/2095/2052)
+	TCPHost   string // camouflage .ir host for the TCP+HTTP-header profile
+	TCPPort   int    // L4 passthrough port (56201–56207)
+}
+
+func (in IranFrontingInput) withDefaults() IranFrontingInput {
+	front := firstNonEmptyPlan(in.Front, secrets.DefaultIranFront())
+	if in.CDNHost == "" {
+		in.CDNHost = front
+	}
+	if in.CDNPort == 0 {
+		in.CDNPort = 2053
+	}
+	in.Front = front
+	if in.WSFront == "" {
+		in.WSFront = front
+	}
+	if in.WSAddress == "" {
+		in.WSAddress = "snapp.ir"
+	}
+	if in.WSPort == 0 {
+		in.WSPort = 8880
+	}
+	if in.TCPHost == "" {
+		in.TCPHost = front
+	}
+	if in.TCPPort == 0 {
+		in.TCPPort = 56201
+	}
+	return in
+}
+
+// GenerateIranProtocolPlan returns the three Iran domestic-fronting profiles
+// (XHTTP-over-TLS, WS-security=none with a .ir Host decoy, and TCP+HTTP-header
+// camouflage). They are gated behind Profile == "iran-domestic" so the default
+// Cloudflare flow and its test counts are unaffected when the profile is unused.
+func GenerateIranProtocolPlan(domain string, front IranFrontingInput, generated secrets.GeneratedSecrets) types.ProtocolPlan {
+	front = front.withDefaults()
+	clientSuffix := clientSuffix(domain)
+	wsPath := firstNonEmptyPlan(generated.IranWSPath, secrets.DefaultIranWSPath)
+	return types.ProtocolPlan{Protocols: []types.Protocol{
+		{
+			Name:              "iran_xhttp_tls",
+			Enabled:           true,
+			Profile:           "iran-domestic",
+			Hostname:          front.CDNHost,
+			Address:           front.CDNHost, // clean ArvanCloud edge host/IP (operator input)
+			Host:              front.Front,   // front .ir — MUST equal ServerName (Arvan 403 on mismatch)
+			ServerName:        front.Front,
+			Port:              front.CDNPort,
+			Network:           "xhttp",
+			Transport:         "xhttp",
+			Security:          "tls",
+			TLS:               true,
+			Tag:               "wdns-iran-xhttp-cdn",
+			ClientEmail:       "WhiteDNS-iran-xhttp-" + clientSuffix,
+			Path:              "/",
+			CloudflareProxied: false,
+			Certificate:       "none",
+			CertMode:          "origin-http",
+			Extra:             `{"scMaxEachPostBytes":1000000,"scMinPostsIntervalMs":30,"xPaddingBytes":"100-1000","noGRPCHeader":false}`,
+		},
+		{
+			Name:              "iran_ws_none",
+			Enabled:           true,
+			Profile:           "iran-domestic",
+			Hostname:          front.WSAddress,
+			Address:           front.WSAddress, // high-collateral .ir connect decoy (operator input)
+			Host:              front.WSFront,   // .ir front — DIFFERS from Address
+			ServerName:        "",              // no SNI (security=none)
+			Port:              front.WSPort,
+			Network:           "ws",
+			Transport:         "ws",
+			Security:          "none",
+			TLS:               false,
+			Tag:               "wdns-iran-ws-cdn",
+			ClientEmail:       "WhiteDNS-iran-ws-" + clientSuffix,
+			Path:              wsPath,
+			CloudflareProxied: false,
+			Certificate:       "none",
+			CertMode:          "origin-http",
+		},
+		{
+			Name:              "iran_tcp_http",
+			Enabled:           true,
+			Profile:           "iran-domestic",
+			Hostname:          front.TCPHost,
+			Address:           front.TCPHost, // camouflage .ir host (operator input)
+			Host:              "",
+			ServerName:        "",
+			Port:              front.TCPPort,
+			Network:           "tcp",
+			Transport:         "tcp",
+			Security:          "none",
+			TLS:               false,
+			HeaderType:        "http",
+			Tag:               "wdns-iran-tcp-http",
+			ClientEmail:       "WhiteDNS-iran-tcp-" + clientSuffix,
+			Path:              "/",
+			CloudflareProxied: false,
+			Certificate:       "none",
+			CertMode:          "origin-http",
+		},
+	}}
+}
+
+func firstNonEmptyPlan(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func clientSuffix(domain string) string {
 	out := make([]byte, 0, len(domain))
 	for i := 0; i < len(domain); i++ {

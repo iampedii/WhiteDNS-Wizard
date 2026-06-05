@@ -63,6 +63,7 @@ const (
 	menuChangeDomain
 	menuReset
 	menuDelete
+	menuIranFronting
 )
 
 type model struct {
@@ -506,7 +507,8 @@ func (m model) View() string {
 			"d) Dashboard credentials and login info\n" +
 			"c) Change Cloudflare domain\n" +
 			"r) Reset installation\n" +
-			"x) Delete installation\n\n" +
+			"x) Delete installation\n" +
+			"i) Iran domestic-fronting configs\n\n" +
 			m.inlineError() +
 			hintStyle.Render("Press a shortcut key. Press q or esc to exit.")
 	case stepWelcome:
@@ -778,9 +780,40 @@ func (m model) handleMenuKey(key string) (tea.Model, tea.Cmd) {
 		return m.startProjectAction(menuReset)
 	case "x", "X":
 		return m.startProjectAction(menuDelete)
+	case "i", "I":
+		return m.startIranFronting()
 	default:
 		return m, nil
 	}
+}
+
+func (m model) startIranFronting() (tea.Model, tea.Cmd) {
+	m.menuAction = menuIranFronting
+	m.actionTitle = menuActionTitle(menuIranFronting)
+	m.actionFailed = false
+	m.inputError = ""
+	bundle, err := xui.BuildIranProtocolBundle("iran-domestic.local", planner.IranFrontingInput{}, map[string]string{
+		"iran_xhttp_uuid": "00000000-0000-0000-0000-000000000001",
+		"iran_ws_uuid":    "00000000-0000-0000-0000-000000000002",
+		"iran_tcp_uuid":   "00000000-0000-0000-0000-000000000003",
+		"iran_ws_path":    "/filmonline?ed=2048",
+	})
+	if err != nil {
+		m.actionFailed = true
+		m.actionBody = "Could not build Iran domestic-fronting profiles: " + err.Error()
+		m.step = stepActionDetail
+		return m, nil
+	}
+	var b strings.Builder
+	b.WriteString("Operator-supplied .ir fronts are rotatable (seed: owner-controlled abshardejh.ir).\n")
+	b.WriteString("Use the CLI for custom fronts: whitedns iran plan --front-domain ... --cdn-host ...\n\n")
+	for _, client := range bundle.Links.Clients {
+		fmt.Fprintf(&b, "# %s\n%s\n\n", client.Name, client.Link)
+	}
+	b.WriteString(xui.RenderIranChecklist())
+	m.actionBody = b.String()
+	m.step = stepActionDetail
+	return m, nil
 }
 
 func (m model) startProjectAction(action menuAction) (tea.Model, tea.Cmd) {
@@ -941,6 +974,8 @@ func menuActionTitle(action menuAction) string {
 		return "Reset installation"
 	case menuDelete:
 		return "Delete installation"
+	case menuIranFronting:
+		return "Iran domestic-fronting profiles"
 	default:
 		return "WhiteDNS"
 	}

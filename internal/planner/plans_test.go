@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/whitedns/wdns-wizard/internal/secrets"
+	"github.com/whitedns/wdns-wizard/pkg/types"
 )
 
 func TestGenerateDNSPlan(t *testing.T) {
@@ -109,5 +110,108 @@ func TestGenerateProtocolPlan(t *testing.T) {
 		if !ok || got != want {
 			t.Fatalf("protocol %s = %+v, want %+v", tag, got, want)
 		}
+	}
+}
+
+func TestGenerateIranDNSPlanEmitsNoCDNRecords(t *testing.T) {
+	if plan := GenerateIranDNSPlan("", ""); len(plan.Records) != 0 {
+		t.Fatalf("iran dns plan without origin should be empty, got %d", len(plan.Records))
+	}
+	plan := GenerateIranDNSPlan("origin.example.com", "1.2.3.4")
+	if len(plan.Records) != 1 {
+		t.Fatalf("iran dns plan = %d records, want 1 origin-only", len(plan.Records))
+	}
+	if plan.Records[0].Proxied {
+		t.Fatal("iran origin record must never be proxied (Cloudflare is blocked in Iran)")
+	}
+}
+
+func TestGenerateIranProtocolPlan(t *testing.T) {
+	plan := GenerateIranProtocolPlan("example.com", IranFrontingInput{
+		Front:     "setup.azargate.ir",
+		CDNHost:   "cdn2.navaanet.ir",
+		CDNPort:   2053,
+		WSFront:   "domain.iran243.ir",
+		WSAddress: "snapp.ir",
+		WSPort:    8880,
+		TCPHost:   "edge.nextgen.ir",
+		TCPPort:   56206,
+	}, secrets.GeneratedSecrets{IranWSPath: "/filmonline?ed=2048"})
+	if len(plan.Protocols) != 3 {
+		t.Fatalf("iran protocols = %d, want 3", len(plan.Protocols))
+	}
+	xhttp := plan.Protocols[0]
+	if xhttp.Name != "iran_xhttp_tls" || xhttp.Profile != "iran-domestic" || xhttp.Port != 2053 {
+		t.Fatalf("unexpected xhttp profile: %+v", xhttp)
+	}
+	if xhttp.Address != "cdn2.navaanet.ir" || xhttp.Host != "setup.azargate.ir" || xhttp.ServerName != "setup.azargate.ir" {
+		t.Fatalf("xhttp address/host/sni split wrong: %+v", xhttp)
+	}
+	if !xhttp.TLS || xhttp.Security != "tls" || xhttp.CertMode != "origin-http" {
+		t.Fatalf("xhttp tls/security/certmode wrong: %+v", xhttp)
+	}
+	ws := plan.Protocols[1]
+	if ws.Name != "iran_ws_none" || ws.TLS || ws.ServerName != "" || ws.Security != "none" {
+		t.Fatalf("unexpected ws profile: %+v", ws)
+	}
+	if ws.Address != "snapp.ir" || ws.Host != "domain.iran243.ir" || ws.Address == ws.Host {
+		t.Fatalf("ws address must differ from host: %+v", ws)
+	}
+	if ws.Path != "/filmonline?ed=2048" {
+		t.Fatalf("ws path = %q, want /filmonline?ed=2048", ws.Path)
+	}
+	tcp := plan.Protocols[2]
+	if tcp.Name != "iran_tcp_http" || tcp.HeaderType != "http" || tcp.Network != "tcp" || tcp.Port != 56206 {
+		t.Fatalf("unexpected tcp profile: %+v", tcp)
+	}
+}
+
+func TestGenerateIranProtocolPlanUsesSafeDefaults(t *testing.T) {
+	plan := GenerateIranProtocolPlan("example.com", IranFrontingInput{}, secrets.GeneratedSecrets{})
+	if len(plan.Protocols) != 3 {
+		t.Fatalf("iran protocols = %d, want 3", len(plan.Protocols))
+	}
+	xhttp := plan.Protocols[0]
+	if xhttp.Host != secrets.DefaultIranFront() || xhttp.ServerName != secrets.DefaultIranFront() {
+		t.Fatalf("default front not seeded from owner-controlled abshardejh.ir: %+v", xhttp)
+	}
+	if err := ValidateIranPlan(plan); err != nil {
+		t.Fatalf("default iran plan should validate: %v", err)
+	}
+}
+
+func TestValidateIranProfilesRejectsSNIMismatch(t *testing.T) {
+	proto := types.Protocol{
+		Name:       "iran_xhttp_tls",
+		TLS:        true,
+		ServerName: "front-a.ir",
+		Host:       "front-b.ir",
+		Address:    "cdn.example.ir",
+	}
+	if err := ValidateIranProfiles(proto); err == nil {
+		t.Fatal("expected SNI != Host error for iran_xhttp_tls")
+	}
+}
+
+func TestValidateIranProfilesRejectsWSWithSNI(t *testing.T) {
+	proto := types.Protocol{
+		Name:       "iran_ws_none",
+		ServerName: "leaky.ir",
+		Address:    "snapp.ir",
+		Host:       "front.ir",
+	}
+	if err := ValidateIranProfiles(proto); err == nil {
+		t.Fatal("expected no-SNI error for iran_ws_none")
+	}
+}
+
+func TestValidateIranProfilesRejectsWSAddressEqualsHost(t *testing.T) {
+	proto := types.Protocol{
+		Name:    "iran_ws_none",
+		Address: "snapp.ir",
+		Host:    "snapp.ir",
+	}
+	if err := ValidateIranProfiles(proto); err == nil {
+		t.Fatal("expected address==host error for iran_ws_none")
 	}
 }

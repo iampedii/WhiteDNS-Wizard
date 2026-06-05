@@ -40,6 +40,14 @@ func RenderCompose(postgresPassword string) string {
       - "2101:2101/tcp"
       - "8390:8390/tcp"
       - "8390:8390/udp"
+      - "8080:8080/tcp"
+      - "56201:56201/tcp"
+      - "56202:56202/tcp"
+      - "56203:56203/tcp"
+      - "56204:56204/tcp"
+      - "56205:56205/tcp"
+      - "56206:56206/tcp"
+      - "56207:56207/tcp"
     restart: unless-stopped
     depends_on:
       - postgres
@@ -392,5 +400,13 @@ func publicFirewallRules() []string {
 		"2101/tcp",
 		"8390/tcp",
 		"8390/udp",
+		"8080/tcp",
+		"56201/tcp",
+		"56202/tcp",
+		"56203/tcp",
+		"56204/tcp",
+		"56205/tcp",
+		"56206/tcp",
+		"56207/tcp",
 	}
 }

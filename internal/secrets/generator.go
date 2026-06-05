@@ -49,6 +49,10 @@ type GeneratedSecrets struct {
 	PostgresPassword       string `yaml:"postgres_password"`
 	VLESSWSPath            string `yaml:"vless_ws_path"`
 	TrojanWSPath           string `yaml:"trojan_ws_path"`
+	IranXHTTPUUID          string `yaml:"iran_xhttp_uuid"`
+	IranWSUUID             string `yaml:"iran_ws_uuid"`
+	IranTCPUUID            string `yaml:"iran_tcp_uuid"`
+	IranWSPath             string `yaml:"iran_ws_path"`
 }
 
 func Generate() (GeneratedSecrets, error) {
@@ -199,6 +203,10 @@ func Generate() (GeneratedSecrets, error) {
 		PostgresPassword:       postgresPassword,
 		VLESSWSPath:            vlessPath,
 		TrojanWSPath:           trojanPath,
+		IranXHTTPUUID:          uuid.NewString(),
+		IranWSUUID:             uuid.NewString(),
+		IranTCPUUID:            uuid.NewString(),
+		IranWSPath:             DefaultIranWSPath,
 	}, nil
 }
 
@@ -256,6 +264,27 @@ func realityMLKEMValue(mode string) (string, error) {
 	}
 	return "mlkem768x25519plus.native." + mode + "." + value, nil
 }
+
+// DefaultIranWSPath is the WebSocket path (with client-only early data) used by
+// the Iran WS-none domestic-fronting profile.
+const DefaultIranWSPath = "/filmonline?ed=2048"
+
+// iranFrontingCandidates are candidate .ir fronting hosts. SEED with the
+// owner-controlled abshardejh.ir; the Example.txt tenant domains are other
+// tenants' and WILL die — treat fronts as rotatable, validated at gen-time, and
+// NEVER hardcode the Example.txt tenant domains as fixed truth. Operators append
+// their own rotatable .ir fronts at runtime.
+var iranFrontingCandidates = []string{
+	"abshardejh.ir", // owner-controlled ArvanCloud (plan 1, NOT production) — safe default seed
+}
+
+// IranFrontingCandidates returns a copy of the seeded .ir fronting pool.
+func IranFrontingCandidates() []string {
+	return append([]string(nil), iranFrontingCandidates...)
+}
+
+// DefaultIranFront returns the default (owner-controlled) .ir fronting host.
+func DefaultIranFront() string { return iranFrontingCandidates[0] }
 
 func RealitySNICandidates() []string {
 	return append([]string(nil), realitySNICandidates...)
@@ -369,5 +398,9 @@ func PlaintextMap(token string, generated GeneratedSecrets, originPrivateKey str
 		"postgres_password":               generated.PostgresPassword,
 		"vless_ws_path":                   generated.VLESSWSPath,
 		"trojan_ws_path":                  generated.TrojanWSPath,
+		"iran_xhttp_uuid":                 generated.IranXHTTPUUID,
+		"iran_ws_uuid":                    generated.IranWSUUID,
+		"iran_tcp_uuid":                   generated.IranTCPUUID,
+		"iran_ws_path":                    generated.IranWSPath,
 	}
 }

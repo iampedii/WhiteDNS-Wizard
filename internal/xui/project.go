@@ -110,6 +110,10 @@ func (p projectData) ensureXUISecrets(panel PanelCredentials) (bool, error) {
 		"tor_hysteria2_obfs_password":     generated.TorHysteria2ObfsPass,
 		"tor_shadowsocks_server_password": generated.TorShadowsocksServer,
 		"tor_shadowsocks_client_password": generated.TorShadowsocksClient,
+		"iran_xhttp_uuid":                 generated.IranXHTTPUUID,
+		"iran_ws_uuid":                    generated.IranWSUUID,
+		"iran_tcp_uuid":                   generated.IranTCPUUID,
+		"iran_ws_path":                    generated.IranWSPath,
 	}
 	for key, value := range defaults {
 		if strings.TrimSpace(p.Secrets[key]) == "" {

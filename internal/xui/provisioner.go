@@ -2,7 +2,14 @@ package xui
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	crand "crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"net"
 	"os"
 	"path/filepath"
@@ -12,6 +19,7 @@ import (
 	"github.com/whitedns/wdns-wizard/internal/acme"
 	"github.com/whitedns/wdns-wizard/internal/credentials"
 	"github.com/whitedns/wdns-wizard/internal/output"
+	"github.com/whitedns/wdns-wizard/internal/secrets"
 	"github.com/whitedns/wdns-wizard/pkg/types"
 )
 
@@ -319,6 +327,18 @@ func (p Provisioner) detectPanelConflicts(ctx context.Context, input Input, proj
 }
 
 func (p Provisioner) ensureCertificates(ctx context.Context, project projectData, input Input, progress *progressRecorder) error {
+	switch input.CertMode {
+	case CertModeOriginHTTP:
+		// Origin listens HTTP behind the CDN (ArvanCloud origin-pull) — no cert
+		// at all. This is the Cloudflare/ACME coupling-break for the Iran path.
+		progress.Log("Iran domestic-fronting: origin listens HTTP behind the CDN; skipping all certificate handling.")
+		return nil
+	case CertModeSelfSigned:
+		progress.Log("Iran domestic-fronting: ensuring a self-signed origin certificate (ArvanCloud does not validate origin certs).")
+		return p.ensureSelfSignedOrigin(project)
+	default:
+		// "" / cloudflare-origin-ca — the existing Cloudflare path, unchanged.
+	}
 	progress.Log("Checking required Cloudflare Origin CA certificate files.")
 	if _, err := os.Stat(project.Paths.OriginCert); err != nil {
 		return fmt.Errorf("origin certificate is missing; run Cloudflare apply first: %w", err)
@@ -362,6 +382,76 @@ func (p Provisioner) ensureCertificates(ctx context.Context, project projectData
 	}
 	if err := os.WriteFile(project.Paths.PublicKey, []byte(cert.KeyPEM), 0o600); err != nil {
 		return fmt.Errorf("write public ACME key: %w", err)
+	}
+	return nil
+}
+
+// ensureSelfSignedOrigin writes an ECDSA P-256 self-signed origin certificate
+// (and key) to the project origin paths, reusing the keygen pattern from
+// cloudflare/origin.go but with x509.CreateCertificate self-signed (template is
+// its own parent). It NEVER touches credentials.Load() or acme — the Iran path
+// has no Cloudflare/ACME dependency. ArvanCloud does not validate origin certs.
+func (p Provisioner) ensureSelfSignedOrigin(project projectData) error {
+	if _, err := os.Stat(project.Paths.OriginCert); err == nil {
+		if _, keyErr := os.Stat(project.Paths.OriginKey); keyErr == nil {
+			return nil
+		}
+	}
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), crand.Reader)
+	if err != nil {
+		return fmt.Errorf("generate self-signed origin key: %w", err)
+	}
+	serial, err := crand.Int(crand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return fmt.Errorf("generate self-signed origin serial: %w", err)
+	}
+	sans := []string{project.Domain, "*." + project.Domain}
+	for _, front := range secrets.IranFrontingCandidates() {
+		sans = append(sans, front, "*."+front)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: project.Domain},
+		DNSNames:              sans,
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().AddDate(10, 0, 0),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	certDER, err := x509.CreateCertificate(crand.Reader, template, template, &priv.PublicKey, priv)
+	if err != nil {
+		return fmt.Errorf("create self-signed origin certificate: %w", err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(priv)
+	if err != nil {
+		return fmt.Errorf("marshal self-signed origin key: %w", err)
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	if certPEM == nil || keyPEM == nil {
+		return fmt.Errorf("encode self-signed origin material")
+	}
+	if err := os.MkdirAll(filepath.Dir(project.Paths.OriginCert), 0o755); err != nil {
+		return fmt.Errorf("create origin cert directory: %w", err)
+	}
+	if err := os.WriteFile(project.Paths.OriginCert, certPEM, 0o644); err != nil {
+		return fmt.Errorf("write self-signed origin certificate: %w", err)
+	}
+	if err := os.WriteFile(project.Paths.OriginKey, keyPEM, 0o600); err != nil {
+		return fmt.Errorf("write self-signed origin key: %w", err)
+	}
+	// Mirror into the public cert paths so downstream upload/use has a single
+	// origin trust material set for the Iran self-signed mode.
+	if err := os.MkdirAll(filepath.Dir(project.Paths.PublicCert), 0o755); err != nil {
+		return fmt.Errorf("create public cert directory: %w", err)
+	}
+	if err := os.WriteFile(project.Paths.PublicCert, certPEM, 0o644); err != nil {
+		return fmt.Errorf("write self-signed public certificate: %w", err)
+	}
+	if err := os.WriteFile(project.Paths.PublicKey, keyPEM, 0o600); err != nil {
+		return fmt.Errorf("write self-signed public key: %w", err)
 	}
 	return nil
 }

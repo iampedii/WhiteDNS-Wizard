@@ -26,6 +26,33 @@ func TestInitStartsAtMenu(t *testing.T) {
 	}
 }
 
+func TestMenuShowsIranItem(t *testing.T) {
+	m := newModel(app.Provisioner{Root: t.TempDir()})
+	view := m.View()
+	if !strings.Contains(view, "i) Iran domestic-fronting configs") {
+		t.Fatalf("menu view missing Iran domestic-fronting item:\n%s", view)
+	}
+}
+
+func TestMenuIranFrontingShowsProfiles(t *testing.T) {
+	m := newModel(app.Provisioner{Root: t.TempDir()})
+	next, _ := m.handleMenuKey("i")
+	got := next.(model)
+	if got.menuAction != menuIranFronting {
+		t.Fatalf("menuAction = %v, want menuIranFronting", got.menuAction)
+	}
+	if got.step != stepActionDetail || got.actionFailed {
+		t.Fatalf("step/actionFailed = %v/%v, want successful detail", got.step, got.actionFailed)
+	}
+	view := got.View()
+	if !strings.Contains(view, "type=xhttp&security=tls") {
+		t.Fatalf("iran fronting view missing XHTTP-TLS link:\n%s", view)
+	}
+	if !strings.Contains(view, "Manual ArvanCloud checklist") {
+		t.Fatalf("iran fronting view missing manual checklist:\n%s", view)
+	}
+}
+
 func TestMenuOptionZeroEntersSetupWelcome(t *testing.T) {
 	m := newModel(app.Provisioner{Root: t.TempDir()})
 	next, _ := m.handleMenuKey("0")

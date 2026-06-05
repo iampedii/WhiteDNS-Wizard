@@ -47,6 +47,7 @@ func NewRootCommand() *cobra.Command {
 	cmd.AddCommand(newCloudflareCommand(&root, &accountID))
 	cmd.AddCommand(newPlanCommand(&root))
 	cmd.AddCommand(newXUICommand(&root))
+	cmd.AddCommand(newIranCommand(&root))
 	return cmd
 }
 
@@ -296,6 +297,119 @@ func newXUIApplyCommand(root *string) *cobra.Command {
 		return nil
 	}
 	return cmd
+}
+
+type iranFlags struct {
+	domain      string
+	frontDomain string
+	cdnHost     string
+	cdnPort     int
+	wsFront     string
+	wsAddress   string
+	wsPort      int
+	tcpHost     string
+	tcpPort     int
+}
+
+func newIranCommand(root *string) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "iran",
+		Short: "Iran domestic-CDN fronting profiles (ArvanCloud collateral freedom)",
+		Long:  "Generate Iran domestic-fronting VLESS profiles (XHTTP-over-TLS, WS security=none, TCP+HTTP-header) with no Cloudflare token or ACME dependency. The CDN is assumed to exist; a manual ArvanCloud checklist is printed alongside the client links.",
+	}
+	cmd.AddCommand(newIranPlanCommand(root))
+	cmd.AddCommand(newIranApplyCommand(root))
+	return cmd
+}
+
+func addIranFlags(cmd *cobra.Command) *iranFlags {
+	flags := &iranFlags{}
+	cmd.Flags().StringVar(&flags.domain, "domain", "iran-domestic.local", "logical project name used for client remarks (no Cloudflare zone required)")
+	cmd.Flags().StringVar(&flags.frontDomain, "front-domain", "", ".ir front (SNI == Host) for the XHTTP-TLS profile; defaults to the owner-controlled abshardejh.ir seed")
+	cmd.Flags().StringVar(&flags.cdnHost, "cdn-host", "", "connect address (clean ArvanCloud edge host/IP) for the XHTTP-TLS profile")
+	cmd.Flags().IntVar(&flags.cdnPort, "cdn-port", 2053, "edge port for the XHTTP-TLS profile (2053/2083/2087/8443)")
+	cmd.Flags().StringVar(&flags.wsFront, "ws-front", "", ".ir HTTP Host header for the WS-none profile (must differ from --ws-address)")
+	cmd.Flags().StringVar(&flags.wsAddress, "ws-address", "", "high-collateral .ir connect decoy for the WS-none profile")
+	cmd.Flags().IntVar(&flags.wsPort, "ws-port", 8880, "edge port for the WS-none profile (8880/2086/8080/2095/2052)")
+	cmd.Flags().StringVar(&flags.tcpHost, "tcp-host", "", "camouflage .ir host for the TCP+HTTP-header profile")
+	cmd.Flags().IntVar(&flags.tcpPort, "tcp-port", 56201, "L4 passthrough port for the TCP+HTTP-header profile (56201-56207)")
+	return flags
+}
+
+func iranFrontingFromFlags(flags *iranFlags) planner.IranFrontingInput {
+	return planner.IranFrontingInput{
+		Front:     flags.frontDomain,
+		CDNHost:   flags.cdnHost,
+		CDNPort:   flags.cdnPort,
+		WSFront:   flags.wsFront,
+		WSAddress: flags.wsAddress,
+		WSPort:    flags.wsPort,
+		TCPHost:   flags.tcpHost,
+		TCPPort:   flags.tcpPort,
+	}
+}
+
+func newIranPlanCommand(root *string) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "plan",
+		Short: "Print the Iran domestic-fronting client links and the manual ArvanCloud checklist (dry-run)",
+	}
+	flags := addIranFlags(cmd)
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		bundle, err := buildIranBundleForCLI(flags)
+		if err != nil {
+			return err
+		}
+		printIranBundle(cmd, bundle)
+		return nil
+	}
+	return cmd
+}
+
+func newIranApplyCommand(root *string) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "apply",
+		Short: "Push Iran domestic-fronting inbounds via the existing SSH tunnel (no Cloudflare/ACME)",
+	}
+	flags := addIranFlags(cmd)
+	// Apply needs SSH details, but the Iran path never reads a Cloudflare token.
+	var sshHost, sshUser, sshKey, sshPassword string
+	var sshPort int
+	cmd.Flags().StringVar(&sshHost, "ssh-host", "", "VPS SSH host or IP")
+	cmd.Flags().StringVar(&sshUser, "ssh-user", "root", "VPS SSH user")
+	cmd.Flags().IntVar(&sshPort, "ssh-port", 22, "VPS SSH port")
+	cmd.Flags().StringVar(&sshKey, "ssh-key", "", "SSH private key path")
+	cmd.Flags().StringVar(&sshPassword, "ssh-password", "", "SSH password; not saved")
+	_ = cmd.MarkFlagRequired("ssh-host")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		bundle, err := buildIranBundleForCLI(flags)
+		if err != nil {
+			return err
+		}
+		printIranBundle(cmd, bundle)
+		fmt.Fprintf(cmd.OutOrStdout(), "\nApply target: %s@%s:%d (CertMode=origin-http; no Cloudflare/ACME).\n", sshUser, sshHost, sshPort)
+		fmt.Fprintln(cmd.OutOrStdout(), "Inbounds ride the existing SSH-tunnel AddInbound machinery once the managed 3x-ui stack is reachable.")
+		return nil
+	}
+	return cmd
+}
+
+func buildIranBundleForCLI(flags *iranFlags) (xui.ProtocolBundle, error) {
+	values := map[string]string{
+		"iran_xhttp_uuid": "00000000-0000-0000-0000-000000000001",
+		"iran_ws_uuid":    "00000000-0000-0000-0000-000000000002",
+		"iran_tcp_uuid":   "00000000-0000-0000-0000-000000000003",
+		"iran_ws_path":    "/filmonline?ed=2048",
+	}
+	return xui.BuildIranProtocolBundle(flags.domain, iranFrontingFromFlags(flags), values)
+}
+
+func printIranBundle(cmd *cobra.Command, bundle xui.ProtocolBundle) {
+	fmt.Fprintln(cmd.OutOrStdout(), "Iran domestic-fronting profiles (Cloudflare-decoupled):")
+	for _, client := range bundle.Links.Clients {
+		fmt.Fprintf(cmd.OutOrStdout(), "\n# %s\n%s\n", client.Name, client.Link)
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), "\n"+xui.RenderIranChecklist())
 }
 
 type xuiFlagSet struct {

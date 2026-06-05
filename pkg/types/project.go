@@ -88,6 +88,44 @@ type Protocol struct {
 	UDP               bool   `json:"udp,omitempty" yaml:"udp,omitempty"`
 	CloudflareProxied bool   `json:"cloudflare_proxied" yaml:"cloudflare_proxied"`
 	Certificate       string `json:"certificate,omitempty" yaml:"certificate,omitempty"`
+	// --- TRACK A additions (Iran domestic-fronting) ---
+	Address    string `json:"address,omitempty" yaml:"address,omitempty"`         // connect authority: CDN edge host/IP. Fallback: Hostname
+	ServerName string `json:"server_name,omitempty" yaml:"server_name,omitempty"` // TLS SNI; only when TLS=true; empty for WS-none. Fallback: Hostname
+	Host       string `json:"host,omitempty" yaml:"host,omitempty"`               // HTTP Host header (the .ir front). Fallback: ServerName(TLS) else Address
+	Profile    string `json:"profile,omitempty" yaml:"profile,omitempty"`         // "" (global/cloudflare) | "iran-domestic"
+	Security   string `json:"security,omitempty" yaml:"security,omitempty"`       // "tls" | "none" | "reality" (override; defaults from TLS bool)
+	HeaderType string `json:"header_type,omitempty" yaml:"header_type,omitempty"` // "http" for TCP camouflage profile
+	Extra      string `json:"extra,omitempty" yaml:"extra,omitempty"`             // minified XHTTP extra JSON (client link)
+	CertMode   string `json:"cert_mode,omitempty" yaml:"cert_mode,omitempty"`     // "cloudflare-origin-ca" | "self-signed" | "origin-http"
+}
+
+// ResolvedAddress returns the connect authority for the client link, falling
+// back to the legacy Hostname when Address is unset.
+func (p Protocol) ResolvedAddress() string {
+	if p.Address != "" {
+		return p.Address
+	}
+	return p.Hostname
+}
+
+// ResolvedServerName returns the TLS SNI, falling back to Hostname.
+func (p Protocol) ResolvedServerName() string {
+	if p.ServerName != "" {
+		return p.ServerName
+	}
+	return p.Hostname
+}
+
+// ResolvedHost returns the HTTP Host header: explicit Host first, then the SNI
+// (for TLS profiles) and finally the connect address.
+func (p Protocol) ResolvedHost() string {
+	if p.Host != "" {
+		return p.Host
+	}
+	if p.TLS {
+		return p.ResolvedServerName()
+	}
+	return p.ResolvedAddress()
 }
 
 type ProvisionInput struct {

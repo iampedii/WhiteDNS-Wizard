@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/whitedns/wdns-wizard/internal/planner"
+	"github.com/whitedns/wdns-wizard/pkg/types"
 )
 
 func testProtocolValues() map[string]string {
@@ -281,6 +284,9 @@ func TestRenderComposePublishesRequiredPorts(t *testing.T) {
 		`"2101:2101/tcp"`,
 		`"8390:8390/tcp"`,
 		`"8390:8390/udp"`,
+		`"8080:8080/tcp"`,
+		`"56201:56201/tcp"`,
+		`"56207:56207/tcp"`,
 		`container_name: 3xui_tor`,
 		`context: ./tor`,
 		`XUI_DB_TYPE: "postgres"`,
@@ -361,6 +367,221 @@ func TestDetectConflictsFindsPortTagOutboundAndClient(t *testing.T) {
 	kinds := strings.Join([]string{conflicts[0].Kind, conflicts[1].Kind, conflicts[2].Kind, conflicts[3].Kind}, ",")
 	for _, want := range []string{"port", "inbound", "client", "outbound"} {
 		assertContains(t, kinds, want)
+	}
+}
+
+const iranTestUUID = "55555555-5555-5555-5555-555555555555"
+
+func iranXHTTPProto(front, cdnHost string, port int) types.Protocol {
+	return types.Protocol{
+		Name:       "iran_xhttp_tls",
+		Profile:    "iran-domestic",
+		Hostname:   cdnHost,
+		Address:    cdnHost,
+		Host:       front,
+		ServerName: front,
+		Port:       port,
+		Network:    "xhttp",
+		Transport:  "xhttp",
+		Security:   "tls",
+		TLS:        true,
+		Tag:        "wdns-iran-xhttp-cdn",
+		Path:       "/",
+		Extra:      `{"scMaxEachPostBytes":1000000,"scMinPostsIntervalMs":30,"xPaddingBytes":"100-1000","noGRPCHeader":false}`,
+	}
+}
+
+func iranWSProto(front, address string, port int) types.Protocol {
+	return types.Protocol{
+		Name:      "iran_ws_none",
+		Profile:   "iran-domestic",
+		Hostname:  address,
+		Address:   address,
+		Host:      front,
+		Port:      port,
+		Network:   "ws",
+		Transport: "ws",
+		Security:  "none",
+		Tag:       "wdns-iran-ws-cdn",
+		Path:      "/filmonline?ed=2048",
+	}
+}
+
+func iranTCPProto(address string, port int) types.Protocol {
+	return types.Protocol{
+		Name:       "iran_tcp_http",
+		Profile:    "iran-domestic",
+		Hostname:   address,
+		Address:    address,
+		Port:       port,
+		Network:    "tcp",
+		Transport:  "tcp",
+		Security:   "none",
+		HeaderType: "http",
+		Tag:        "wdns-iran-tcp-http",
+		Path:       "/",
+	}
+}
+
+func iranTestValues() map[string]string {
+	return map[string]string{
+		"iran_xhttp_uuid": iranTestUUID,
+		"iran_ws_uuid":    "66666666-6666-6666-6666-666666666666",
+		"iran_tcp_uuid":   "77777777-7777-7777-7777-777777777777",
+		"iran_ws_path":    "/filmonline?ed=2048",
+	}
+}
+
+func buildIranBundle(t *testing.T) ProtocolBundle {
+	t.Helper()
+	bundle, err := BuildIranProtocolBundle("example.com", planner.IranFrontingInput{
+		Front:     "setup.azargate.ir",
+		CDNHost:   "cdn2.navaanet.ir",
+		CDNPort:   2053,
+		WSFront:   "domain.iran243.ir",
+		WSAddress: "snapp.ir",
+		WSPort:    8880,
+		TCPHost:   "edge.nextgen.ir",
+		TCPPort:   56206,
+	}, iranTestValues())
+	if err != nil {
+		t.Fatalf("BuildIranProtocolBundle returned error: %v", err)
+	}
+	return bundle
+}
+
+func TestIranXHTTPLink(t *testing.T) {
+	link := iranXHTTPLink(iranXHTTPProto("setup.azargate.ir", "cdn2.navaanet.ir", 2053), iranTestUUID)
+	assertContains(t, link, "vless://55555555-5555-5555-5555-555555555555@cdn2.navaanet.ir:2053")
+	assertContains(t, link, "?type=xhttp&security=tls&encryption=none")
+	assertContains(t, link, "host=setup.azargate.ir")
+	assertContains(t, link, "sni=setup.azargate.ir")
+	assertContains(t, link, "fp=chrome")
+	assertContains(t, link, "alpn=h2%2Chttp%2F1.1")
+	assertContains(t, link, "%22scMaxEachPostBytes%22%3A1000000")
+	if strings.Contains(link, "+") {
+		t.Fatal("extra must not contain '+' (v2rayN parse bug)")
+	}
+	if strings.Contains(link, "scMaxConcurrentPosts") {
+		t.Fatal("dead field must not be emitted")
+	}
+	assertContains(t, link, "#Iran%20CDN%20XHTTP%20%40whiteDNS")
+}
+
+func TestEscapeQueryValueExtraUsesPercent20NotPlus(t *testing.T) {
+	// A space inside any non-extra value escapes to '+', matching legacy behaviour.
+	if got := escapeQueryValue("path", "a b"); got != "a+b" {
+		t.Fatalf("non-extra space = %q, want a+b", got)
+	}
+	// A space inside extra= must become %20 (never the raw '+' that breaks v2rayN).
+	if got := escapeQueryValue("extra", `{"k": 1}`); strings.Contains(got, "+") {
+		t.Fatalf("extra value must not contain '+': %q", got)
+	}
+	if got := escapeQueryValue("extra", `{"k": 1}`); !strings.Contains(got, "%20") {
+		t.Fatalf("extra space must be %%20-encoded: %q", got)
+	}
+	// A literal '+' inside extra= survives as %2B and is left untouched.
+	if got := escapeQueryValue("extra", "a+b"); got != "a%2Bb" {
+		t.Fatalf("literal '+' in extra = %q, want a%%2Bb", got)
+	}
+}
+
+func TestIranWSLink(t *testing.T) {
+	link := iranWSLink(iranWSProto("domain.iran243.ir", "snapp.ir", 8880), iranTestUUID)
+	assertContains(t, link, "@snapp.ir:8880")
+	assertContains(t, link, "?type=ws&security=none&encryption=none")
+	assertContains(t, link, "host=domain.iran243.ir")
+	if strings.Contains(link, "sni=") {
+		t.Fatal("ws-none must not emit sni")
+	}
+	assertContains(t, link, "%2Ffilmonline%3Fed%3D2048")
+}
+
+func TestIranTCPHTTPLink(t *testing.T) {
+	link := iranTCPHTTPLink(iranTCPProto("edge.nextgen.ir", 56206), iranTestUUID)
+	assertContains(t, link, "@edge.nextgen.ir:56206")
+	assertContains(t, link, "?type=tcp&security=none&encryption=none&headerType=http")
+}
+
+func TestIranXHTTPInboundShape(t *testing.T) {
+	inbounds := buildIranBundle(t).Inbounds
+	in := inboundByTag(t, inbounds, "wdns-iran-xhttp-cdn")
+	ss := in.StreamSettings
+	if ss["security"] != "none" {
+		t.Fatalf("origin XHTTP must be security=none, got %v", ss["security"])
+	}
+	if _, hasReality := ss["realitySettings"]; hasReality {
+		t.Fatal("must NOT carry realitySettings")
+	}
+	xh := ss["xhttpSettings"].(map[string]any)
+	if xh["host"] != "setup.azargate.ir" {
+		t.Fatalf("xhttp host = %v, want setup.azargate.ir", xh["host"])
+	}
+	if xh["scMaxBufferedPosts"] != 30 {
+		t.Fatalf("scMaxBufferedPosts = %v, want 30", xh["scMaxBufferedPosts"])
+	}
+	if _, hasDead := xh["scMaxConcurrentPosts"]; hasDead {
+		t.Fatal("dead scMaxConcurrentPosts must not be emitted server-side")
+	}
+	if in.Sniffing["enabled"] != false {
+		t.Fatal("sniffing must be disabled")
+	}
+}
+
+func TestIranWSInboundShape(t *testing.T) {
+	in := inboundByTag(t, buildIranBundle(t).Inbounds, "wdns-iran-ws-cdn")
+	ss := in.StreamSettings
+	if ss["security"] != "none" {
+		t.Fatalf("ws security = %v, want none", ss["security"])
+	}
+	if _, has := ss["tlsSettings"]; has {
+		t.Fatal("ws-none must not carry tlsSettings")
+	}
+	ws := ss["wsSettings"].(map[string]any)
+	if ws["path"] != "/filmonline" {
+		t.Fatalf("server ws path = %v, want /filmonline (strips ?ed=)", ws["path"])
+	}
+	if ws["host"] != "domain.iran243.ir" {
+		t.Fatalf("ws host = %v, want domain.iran243.ir", ws["host"])
+	}
+}
+
+func TestIranTCPInboundShape(t *testing.T) {
+	in := inboundByTag(t, buildIranBundle(t).Inbounds, "wdns-iran-tcp-http")
+	ss := in.StreamSettings
+	if ss["network"] != "tcp" || ss["security"] != "none" {
+		t.Fatalf("unexpected tcp stream: %+v", ss)
+	}
+	tcp := ss["tcpSettings"].(map[string]any)
+	header := tcp["header"].(map[string]any)
+	if header["type"] != "http" {
+		t.Fatalf("tcp header type = %v, want http", header["type"])
+	}
+}
+
+func TestBuildIranProtocolBundleCreatesThreeProfiles(t *testing.T) {
+	bundle := buildIranBundle(t)
+	if len(bundle.Inbounds) != 3 {
+		t.Fatalf("iran inbounds = %d, want 3", len(bundle.Inbounds))
+	}
+	if len(bundle.Links.Clients) != 3 {
+		t.Fatalf("iran links = %d, want 3", len(bundle.Links.Clients))
+	}
+	for _, proto := range bundle.Plan.Protocols {
+		if proto.Profile != "iran-domestic" {
+			t.Fatalf("profile = %q, want iran-domestic", proto.Profile)
+		}
+	}
+}
+
+func TestBuildIranProtocolBundleRejectsBadFront(t *testing.T) {
+	_, err := BuildIranProtocolBundle("example.com", planner.IranFrontingInput{
+		Front:   "front-a.ir",
+		CDNHost: "cdn.example.ir",
+		WSFront: "front.ir", WSAddress: "front.ir", // address == host -> invalid
+	}, iranTestValues())
+	if err == nil {
+		t.Fatal("expected validation error for ws address == host")
 	}
 }
 

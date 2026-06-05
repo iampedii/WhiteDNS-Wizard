@@ -77,3 +77,51 @@ func containsString(values []string, want string) bool {
 	}
 	return false
 }
+
+func TestEnsureCertificatesOriginHTTPSkipsAllCertHandling(t *testing.T) {
+	dir := t.TempDir()
+	project := projectData{
+		Root:   dir,
+		Domain: "example.com",
+		Paths:  output.Paths(dir, "example.com"),
+	}
+	progress := newProgressRecorder(nil)
+	// origin-http requires NO origin cert and must never call credentials/acme.
+	if err := (Provisioner{}).ensureCertificates(nil, project, Input{CertMode: CertModeOriginHTTP}, progress); err != nil {
+		t.Fatalf("origin-http ensureCertificates should be a no-op, got: %v", err)
+	}
+	if _, err := os.Stat(project.Paths.OriginCert); err == nil {
+		t.Fatal("origin-http must not create an origin certificate")
+	}
+}
+
+func TestEnsureCertificatesSelfSignedWritesOriginCert(t *testing.T) {
+	dir := t.TempDir()
+	project := projectData{
+		Root:   dir,
+		Domain: "example.com",
+		Paths:  output.Paths(dir, "example.com"),
+	}
+	progress := newProgressRecorder(nil)
+	if err := (Provisioner{}).ensureCertificates(nil, project, Input{CertMode: CertModeSelfSigned}, progress); err != nil {
+		t.Fatalf("self-signed ensureCertificates returned error: %v", err)
+	}
+	certPEM, err := os.ReadFile(project.Paths.OriginCert)
+	if err != nil {
+		t.Fatalf("read self-signed origin cert: %v", err)
+	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		t.Fatal("self-signed origin cert is not valid PEM")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse self-signed origin cert: %v", err)
+	}
+	if err := cert.VerifyHostname("abshardejh.ir"); err != nil {
+		t.Fatalf("self-signed cert should cover the seeded .ir front: %v", err)
+	}
+	if _, err := os.Stat(project.Paths.OriginKey); err != nil {
+		t.Fatalf("self-signed origin key missing: %v", err)
+	}
+}
