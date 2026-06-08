@@ -427,7 +427,7 @@ func (m model) handleEnter() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.inputError = ""
-		m.step = stepSSHUser
+		m.step = stepSSHPort
 		m.sshHostInput.Blur()
 		m.sshPortInput.Focus()
 	case stepSSHPort:
