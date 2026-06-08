@@ -37,6 +37,7 @@ type ProjectSummary struct {
 	ProjectDir  string
 	VPSIP       string
 	SSHHost     string
+	SSHPort     int
 	ZoneStatus  string
 	LastApplied time.Time
 }

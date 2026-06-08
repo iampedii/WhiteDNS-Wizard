@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"strconv"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -29,6 +30,7 @@ const (
 	stepConfirm
 	stepApplying
 	stepSSHHost
+	stepSSHPort
 	stepSSHUser
 	stepSSHKey
 	stepSSHKeyPassphrase
@@ -74,6 +76,7 @@ type model struct {
 	domainInput     textinput.Model
 	ipInput         textinput.Model
 	sshHostInput    textinput.Model
+	sshPortInput    textinput.Model
 	sshUserInput    textinput.Model
 	sshKeyInput     textinput.Model
 	sshKeyPassInput textinput.Model
@@ -163,6 +166,12 @@ func newModel(provisioner app.Provisioner) model {
 	sshHost.CharLimit = 253
 	sshHost.Width = 40
 
+	sshPort := textinput.New()
+	sshPort.Placeholder = "22"
+	sshPort.CharLimit = 5
+	sshPort.Width = 10
+	sshPort.SetValue("22")
+
 	sshUser := textinput.New()
 	sshUser.Placeholder = "root"
 	sshUser.CharLimit = 64
@@ -202,6 +211,7 @@ func newModel(provisioner app.Provisioner) model {
 		domainInput:     domain,
 		ipInput:         ip,
 		sshHostInput:    sshHost,
+		sshPortInput:    sshPort,
 		sshUserInput:    sshUser,
 		sshKeyInput:     sshKey,
 		sshKeyPassInput: sshKeyPass,
@@ -320,6 +330,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ipInput, cmd = m.ipInput.Update(msg)
 	case stepSSHHost:
 		m.sshHostInput, cmd = m.sshHostInput.Update(msg)
+	case stepSSHPort:
+		m.sshPortInput, cmd = m.sshPortInput.Update(msg)
 	case stepSSHUser:
 		m.sshUserInput, cmd = m.sshUserInput.Update(msg)
 	case stepSSHKey:
@@ -331,7 +343,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case stepActionConfirm:
 		m.confirmInput, cmd = m.confirmInput.Update(msg)
 	}
-	if _, ok := msg.(tea.KeyMsg); ok && (m.step == stepAccount || m.step == stepToken || m.step == stepDomain || m.step == stepIP || m.step == stepMenuDomain || m.step == stepMenuIP || m.step == stepSSHHost || m.step == stepSSHUser || m.step == stepSSHKey || m.step == stepSSHKeyPassphrase || m.step == stepSSHPassword || m.step == stepActionConfirm) {
+	if _, ok := msg.(tea.KeyMsg); ok && (m.step == stepAccount || m.step == stepToken || m.step == stepDomain || m.step == stepIP || m.step == stepMenuDomain || m.step == stepMenuIP || m.step == stepSSHHost || m.step == stepSSHPort || m.step == stepSSHUser || m.step == stepSSHKey || m.step == stepSSHKeyPassphrase || m.step == stepSSHPassword || m.step == stepActionConfirm) {
 		m.inputError = ""
 	}
 	return m, cmd
@@ -417,6 +429,16 @@ func (m model) handleEnter() (tea.Model, tea.Cmd) {
 		m.inputError = ""
 		m.step = stepSSHUser
 		m.sshHostInput.Blur()
+		m.sshPortInput.Focus()
+	case stepSSHPort:
+		if strings.TrimSpace(m.sshPortInput.Value()) == "" {
+			m.inputError = "SSH port is required."
+			m.sshPortInput.Focus()
+			return m, nil
+		}
+		m.inputError = ""
+		m.step = stepSSHUser
+		m.sshPortInput.Blur()
 		m.sshUserInput.Focus()
 	case stepSSHUser:
 		if strings.TrimSpace(m.sshUserInput.Value()) == "" {
@@ -608,6 +630,11 @@ func (m model) View() string {
 			m.sshHostInput.View() + "\n\n" +
 				m.inlineError() +
 				hintStyle.Render("Press Enter to continue.")
+	case stepSSHPort:
+		body = titleStyle.Render("SSH port") + "\n\n" +
+			m.sshPortInput.View() + "\n\n" +
+			m.inlineError() +
+			hintStyle.Render("Default: 22")
 	case stepSSHUser:
 		body = titleStyle.Render("SSH user") + "\n\n" +
 			m.sshUserInput.View() + "\n\n" +
@@ -880,6 +907,7 @@ func (m model) resetToMenu() model {
 	m.domainInput.Blur()
 	m.ipInput.Blur()
 	m.sshHostInput.Blur()
+	m.sshPortInput.Blur()
 	m.sshUserInput.Blur()
 	m.sshKeyInput.Blur()
 	m.sshKeyPassInput.Blur()
@@ -917,7 +945,7 @@ func (m model) projectListView() string {
 		if !project.LastApplied.IsZero() {
 			last = project.LastApplied.Format("2006-01-02 15:04")
 		}
-		fmt.Fprintf(&b, "%s %d) %-28s ip=%-15s ssh=%-15s last=%s\n", cursor, i+1, project.Domain, project.VPSIP, project.SSHHost, last)
+		fmt.Fprintf(&b, "%s %d) %-28s ip=%-15s ssh=%-15s:%d last=%s\n", cursor, i+1, project.Domain, project.VPSIP, project.SSHHost, project.SSHPort, last)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
@@ -986,7 +1014,7 @@ func (m model) showInitSteps() bool {
 		return false
 	}
 	switch m.step {
-	case stepWelcome, stepAccount, stepToken, stepTokenChecking, stepDomain, stepIP, stepConfirm, stepApplying, stepSSHHost, stepSSHUser, stepSSHKey, stepSSHKeyPassphrase, stepSSHPassword, stepXUIChecking, stepXUIConfirm, stepXUIApplying, stepXUIDone, stepDone, stepError:
+	case stepWelcome, stepAccount, stepToken, stepTokenChecking, stepDomain, stepIP, stepConfirm, stepApplying, stepSSHHost, stepSSHPort, stepSSHUser, stepSSHKey, stepSSHKeyPassphrase, stepSSHPassword, stepXUIChecking, stepXUIConfirm, stepXUIApplying, stepXUIDone, stepDone, stepError:
 		return true
 	default:
 		return false
@@ -997,7 +1025,7 @@ func (m model) escReturnsToMenu() bool {
 	switch m.step {
 	case stepProjectSelect, stepActionConfirm, stepMenuLoading, stepActionDetail, stepMenuDomain, stepMenuIP:
 		return true
-	case stepSSHHost, stepSSHUser, stepSSHKey, stepSSHKeyPassphrase, stepSSHPassword:
+	case stepSSHHost, stepSSHPort, stepSSHUser, stepSSHKey, stepSSHKeyPassphrase, stepSSHPassword:
 		return m.menuAction != menuNone
 	default:
 		return false
@@ -1030,7 +1058,7 @@ func (m model) initStepIndex() int {
 		return 1
 	case stepConfirm, stepApplying, stepDone:
 		return 2
-	case stepSSHHost, stepSSHUser, stepSSHKey, stepSSHKeyPassphrase, stepSSHPassword, stepXUIChecking:
+	case stepSSHHost, stepSSHPort, stepSSHUser, stepSSHKey, stepSSHKeyPassphrase, stepSSHPassword, stepXUIChecking:
 		return 3
 	case stepXUIConfirm, stepXUIApplying:
 		return 4
@@ -1075,6 +1103,7 @@ func (m model) handleProvisionError(err error) model {
 	m.domainInput.Blur()
 	m.ipInput.Blur()
 	m.sshHostInput.Blur()
+	m.sshPortInput.Blur()
 	m.sshUserInput.Blur()
 	m.sshKeyInput.Blur()
 	m.sshKeyPassInput.Blur()
@@ -1232,13 +1261,18 @@ func (m model) applyCmd() tea.Cmd {
 }
 
 func (m model) xuiInput(confirm bool) xui.Input {
+	sshPort, err := strconv.Atoi(m.sshPortInput.Value())
+	if err != nil {
+		sshPort = 22
+	}
+
 	return xui.Input{
 		Domain: m.domainInput.Value(),
 		Root:   m.provisioner.Root,
 		SSH: xui.SSHConfig{
 			Host:          m.sshHostInput.Value(),
 			User:          m.sshUserInput.Value(),
-			Port:          22,
+			Port:          sshPort,
 			KeyPath:       m.sshKeyInput.Value(),
 			KeyPassphrase: m.sshKeyPassInput.Value(),
 			Password:      m.sshPassInput.Value(),
@@ -1287,13 +1321,18 @@ func waitXUIProgressCmd(ch <-chan tea.Msg) tea.Cmd {
 }
 
 func (m model) menuXUIInput(domain string) xui.Input {
+	sshPort, err := strconv.Atoi(m.sshPortInput.Value())
+	if err != nil {
+		sshPort = 22
+	}
+
 	return xui.Input{
 		Domain: domain,
 		Root:   m.provisioner.Root,
 		SSH: xui.SSHConfig{
 			Host:          m.sshHostInput.Value(),
 			User:          m.sshUserInput.Value(),
-			Port:          22,
+			Port:          sshPort,
 			KeyPath:       m.sshKeyInput.Value(),
 			KeyPassphrase: m.sshKeyPassInput.Value(),
 			Password:      m.sshPassInput.Value(),

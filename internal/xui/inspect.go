@@ -1679,6 +1679,7 @@ func projectSummary(paths output.ProjectPaths, domain string) (ProjectSummary, e
 	}
 	cfState, _ := readJSONFile[types.CloudflareState](paths.CloudflareState)
 	xuiState, _ := readJSONFile[types.XUIState](paths.XUIState)
+	xuiPlan, _ := readYAMLFile[types.XUIPlan](paths.XUIPlan)
 	lastApplied := cfState.AppliedAt
 	if !xuiState.AppliedAt.IsZero() {
 		lastApplied = xuiState.AppliedAt
@@ -1688,6 +1689,7 @@ func projectSummary(paths output.ProjectPaths, domain string) (ProjectSummary, e
 		ProjectDir:  paths.ProjectDir,
 		VPSIP:       config.VPSIP,
 		SSHHost:     firstNonEmpty(xuiState.RemoteHost, config.VPSIP),
+		SSHPort:     xuiPlan.Remote.SSHPort,
 		ZoneStatus:  cfState.Zone.Status,
 		LastApplied: lastApplied,
 	}, nil
