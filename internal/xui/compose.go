@@ -40,6 +40,8 @@ func RenderCompose(postgresPassword string) string {
       - "2101:2101/tcp"
       - "8390:8390/tcp"
       - "8390:8390/udp"
+	  - "2096:2096/tcp"
+	  - "2096:2096/udp"
     restart: unless-stopped
     depends_on:
       - postgres
