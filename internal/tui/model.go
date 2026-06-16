@@ -436,6 +436,12 @@ func (m model) handleEnter() (tea.Model, tea.Cmd) {
 			m.sshPortInput.Focus()
 			return m, nil
 		}
+		port, err := strconv.Atoi(m.sshPortInput.Value())
+		if err != nil || port < 1 || port > 65535 {
+			m.inputError = "SSH port must be a number between 1 and 65535."
+			m.sshPortInput.Focus()
+			return m, nil
+		}
 		m.inputError = ""
 		m.step = stepSSHUser
 		m.sshPortInput.Blur()
@@ -873,6 +879,7 @@ func (m model) selectProject() (tea.Model, tea.Cmd) {
 		project := m.projects[m.selectedProject]
 		m.ipInput.SetValue(project.VPSIP)
 		m.sshHostInput.SetValue(firstNonEmpty(project.SSHHost, project.VPSIP))
+		m.sshPortInput.SetValue(strconv.Itoa(project.SSHPort))
 	}
 	switch m.menuAction {
 	case menuInfo, menuDashboard:
@@ -920,6 +927,9 @@ func (m *model) prefillSSHFromSelectedProject() {
 		project := m.projects[m.selectedProject]
 		if strings.TrimSpace(m.sshHostInput.Value()) == "" {
 			m.sshHostInput.SetValue(firstNonEmpty(project.SSHHost, project.VPSIP))
+		}
+		if strings.TrimSpace(m.sshPortInput.Value()) == "" {
+			m.sshPortInput.SetValue(strconv.Itoa(project.SSHPort))
 		}
 	}
 	if strings.TrimSpace(m.sshUserInput.Value()) == "" {
