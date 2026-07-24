@@ -21,7 +21,6 @@ type step int
 const (
 	stepMenu step = iota
 	stepWelcome
-	stepCloudflareLink
 	stepAccount
 	stepToken
 	stepTokenChecking
@@ -129,13 +128,6 @@ func Run(provisioner app.Provisioner) error {
 
 func appHeader() string {
 	return titleStyle.Render("WhiteDNS") + "\n" + hintStyle.Render("@whitedns")
-}
-
-// terminalHyperlink renders an OSC 8 escape sequence so the terminal treats
-// label as a single clickable link pointing at url, regardless of how the
-// surrounding text wraps across lines.
-func terminalHyperlink(label, url string) string {
-	return "\x1b]8;;" + url + "\x1b\\" + label + "\x1b]8;;\x1b\\"
 }
 
 func newModel(provisioner app.Provisioner) model {
@@ -352,8 +344,6 @@ func (m model) handleEnter() (tea.Model, tea.Cmd) {
 	case stepProjectSelect:
 		return m.selectProject()
 	case stepWelcome:
-		m.step = stepCloudflareLink
-	case stepCloudflareLink:
 		m.step = stepAccount
 		m.accountInput.Focus()
 	case stepAccount:
@@ -531,15 +521,6 @@ func (m model) View() string {
 			"- create an Origin CA certificate\n" +
 			"- export local plans and encrypted secrets\n\n" +
 			hintStyle.Render("Press Enter to start.")
-	case stepCloudflareLink:
-		cfTokenURL := "https://dash.cloudflare.com/?to=/:account/api-tokens&permissionGroupKeys=%5B%0A%20%20%7B%20%22key%22%3A%20%22dns%22%2C%20%22type%22%3A%20%22read%22%20%7D%2C%0A%20%20%7B%20%22key%22%3A%20%22dns%22%2C%20%22type%22%3A%20%22edit%22%20%7D%2C%0A%20%20%7B%20%22key%22%3A%20%22zone%22%2C%20%22type%22%3A%20%22read%22%20%7D%2C%0A%20%20%7B%20%22key%22%3A%20%22zone_settings%22%2C%20%22type%22%3A%20%22edit%22%20%7D%2C%0A%20%20%7B%20%22key%22%3A%20%22ssl_and_certificates%22%2C%20%22type%22%3A%20%22edit%22%20%7D%0A%5D&name=WhiteDNS"
-		body = titleStyle.Render("Create Cloudflare API token") + "\n\n" +
-			"Open this link and create the token:\n" +
-			terminalHyperlink("Open Cloudflare token creation page", cfTokenURL) + "\n\n" +
-			hintStyle.Render("If the link above does not open, copy the full URL below:") + "\n" +
-			cfTokenURL + "\n\n" +
-			"Just confirm the token on that page.\n\n" +
-			hintStyle.Render("Press Enter to continue.")
 	case stepAccount:
 		body = titleStyle.Render("Cloudflare account ID") + "\n\n" +
 			m.accountInput.View() + "\n\n" +
@@ -552,9 +533,18 @@ func (m model) View() string {
 		body = titleStyle.Render("Cloudflare API token") + "\n\n" +
 			m.tokenInput.View() + "\n\n" +
 			m.inlineError() +
-			"Paste the token you created from the link on the previous step.\n\n" +
+			"Create the token in Cloudflare:\n" +
+			"1. Manage Account > Account API Tokens > Create Token\n" +
+			"2. Choose the Edit zone DNS template\n" +
+			"3. Scope it to the owning Cloudflare zone when possible\n" +
+			"4. Keep DNS: Read + Edit\n" +
+			"5. Add:\n" +
+			"   - DNS & Zones / Zone: Read\n" +
+			"   - DNS & Zones / Zone Settings: Edit\n" +
+			"   - Cache & Performance / Zone SSL & Certificates: Edit\n\n" +
 			"Token validation endpoint:\n" +
 			"GET /client/v4/accounts/" + strings.TrimSpace(m.accountInput.Value()) + "/tokens/verify\n\n" +
+			"Cloudflare API docs may call Edit permissions Write.\n\n" +
 			hintStyle.Render("Press Enter to continue.")
 	case stepTokenChecking:
 		body = titleStyle.Render("Validating token") + "\n\n" +
@@ -996,7 +986,7 @@ func (m model) showInitSteps() bool {
 		return false
 	}
 	switch m.step {
-	case stepWelcome, stepCloudflareLink, stepAccount, stepToken, stepTokenChecking, stepDomain, stepIP, stepConfirm, stepApplying, stepSSHHost, stepSSHUser, stepSSHKey, stepSSHKeyPassphrase, stepSSHPassword, stepXUIChecking, stepXUIConfirm, stepXUIApplying, stepXUIDone, stepDone, stepError:
+	case stepWelcome, stepAccount, stepToken, stepTokenChecking, stepDomain, stepIP, stepConfirm, stepApplying, stepSSHHost, stepSSHUser, stepSSHKey, stepSSHKeyPassphrase, stepSSHPassword, stepXUIChecking, stepXUIConfirm, stepXUIApplying, stepXUIDone, stepDone, stepError:
 		return true
 	default:
 		return false
@@ -1034,7 +1024,7 @@ func (m model) initStepsView() string {
 
 func (m model) initStepIndex() int {
 	switch m.step {
-	case stepWelcome, stepCloudflareLink, stepAccount, stepToken, stepTokenChecking:
+	case stepWelcome, stepAccount, stepToken, stepTokenChecking:
 		return 0
 	case stepDomain, stepIP:
 		return 1
