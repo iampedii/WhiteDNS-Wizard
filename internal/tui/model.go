@@ -553,6 +553,13 @@ func (m model) View() string {
 			m.tokenInput.View() + "\n\n" +
 			m.inlineError() +
 			"Paste the token you created from the link on the previous step.\n\n" +
+			"To create a token manually: Manage Account > Account API Tokens > Create Token\n" +
+			"Use the \"Edit zone DNS template\" or create a custom token with:\n" +
+			"  DNS: Read + Edit\n" +
+			"  DNS & Zones / Zone: Read\n" +
+			"  DNS & Zones / Zone Settings: Edit\n" +
+			"  Cache & Performance / Zone SSL & Certificates: Edit\n\n" +
+			"Cloudflare API docs may call Edit permissions Write — they mean the same thing.\n\n" +
 			"Token validation endpoint:\n" +
 			"GET /client/v4/accounts/" + strings.TrimSpace(m.accountInput.Value()) + "/tokens/verify\n\n" +
 			hintStyle.Render("Press Enter to continue.")
